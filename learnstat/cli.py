@@ -119,7 +119,8 @@ def _repl(s: Session, data: str | None) -> int:
     if data:
         s.ns["df"] = s.read_csv(data)
     if "df" in s.ns:
-        ready.insert(0, "df")
+        shape = getattr(s.ns["df"], "shape", None)
+        ready.insert(0, f"df ({shape[0]} x {shape[1]})" if shape and len(shape) == 2 else "df")
     print(f"Ready: {', '.join(ready)}   |   /help   |   menu")
     buffer: list[str] = []
     while True:
@@ -237,6 +238,7 @@ def _start(args, run_setup: bool) -> int:
     from .guide import run_guide
 
     s = _session(args)
+    s.verbose = False  # no profile dump on load; suggestions appear when the user writes code
     if ai_error:
         s.assistant, s.ai_status = None, f"offline ({ai_error}) - menu 8 to fix"
     return run_guide(s, repl=lambda: _repl(s, None), data=args.data)

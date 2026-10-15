@@ -7,6 +7,7 @@ extras (AI questions, script checks, lessons, AI settings).
 from __future__ import annotations
 
 import sys
+import warnings
 from pathlib import Path
 from typing import Callable
 
@@ -69,16 +70,18 @@ def ask_file(io: IO, pick: Callable, what: str, types: list[tuple[str, str]], sk
 def load_dataset(s: Session, io: IO, path: Path):
     suffix = path.suffix.lower()
     try:
-        if suffix in (".xlsx", ".xls"):
-            df = s.read_excel(path)
-        elif suffix == ".json":
-            df = s.read_json(path)
-        elif suffix == ".parquet":
-            df = s.read_parquet(path)
-        elif suffix == ".tsv":
-            df = s.read_csv(path, sep="\t")
-        else:
-            df = s.read_csv(path)
+        with warnings.catch_warnings():  # library chatter (e.g. openpyxl) is not for students
+            warnings.simplefilter("ignore")
+            if suffix in (".xlsx", ".xls"):
+                df = s.read_excel(path)
+            elif suffix == ".json":
+                df = s.read_json(path)
+            elif suffix == ".parquet":
+                df = s.read_parquet(path)
+            elif suffix == ".tsv":
+                df = s.read_csv(path, sep="\t")
+            else:
+                df = s.read_csv(path)
     except ImportError as e:
         io.say(f"Missing package for {suffix} files: {e}")
         return None

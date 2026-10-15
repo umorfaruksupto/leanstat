@@ -21,7 +21,7 @@ from .recovery import Executor, RunResult
 from .session import Session, get_session, set_session
 from .suggestions import Suggestion
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 
 def read_csv(path, name: str | None = None, **kwargs):
