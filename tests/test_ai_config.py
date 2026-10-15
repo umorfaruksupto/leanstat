@@ -256,3 +256,66 @@ def test_ai_slash_list(server):
     s = Session(ai=False, out=lambda *_: None)
     out = dispatch(s, "/ai list")
     assert "x:" in out and "gpt-a" in out and "k1234567890" not in out
+
+
+# ---------------------------------------------------------------------------
+# guided menu
+
+
+def _guide_run(tmp_path, answers, files=None, **kw):
+    from learnstat.guide import run_guide
+    from learnstat.session import Session
+
+    s = Session(memory_dir=tmp_path / "mem", ai=False, out=lambda *_: None, confirm=lambda q: True)
+    script = Script(answers)
+    queue = list(files or [])
+    pick = lambda title, types: queue.pop(0) if queue else None
+    rc = run_guide(s, script.io(), pick=pick, **kw)
+    return s, script, rc
+
+
+def test_guide_load_data_with_file_window_and_summary(tmp_path):
+    csv = tmp_path / "survey.csv"
+    csv.write_text("age,income\n20,100\n30,200\n40,\n", encoding="utf-8")
+    # load now? y -> Enter opens the file window -> menu: 1 (summary) -> q
+    s, script, rc = _guide_run(tmp_path, ["y", "", "1", "q"], files=[str(csv)])
+    assert rc == 0 and "df" in s.ns and list(s.datasets) == ["survey"]
+    assert 'available as "df"' in script.text and "survey" in script.text
+
+
+def test_guide_missing_file_and_bad_menu_choice(tmp_path):
+    s, script, _ = _guide_run(tmp_path, ["y", str(tmp_path / "nope.csv"), "zzz", "q"])
+    assert "I can't find" in script.text and "Please type one of the numbers" in script.text
+
+
+def test_guide_check_script_and_explain(tmp_path):
+    csv = tmp_path / "survey.csv"
+    csv.write_text("country,income\n" + "\n".join(f"c{i % 12},{i * 10}" for i in range(60)) + "\n", encoding="utf-8")
+    py = tmp_path / "analysis.py"
+    py.write_text(f"import pandas as pd\ndf = pd.read_csv(r'{csv}')\ndf['country'].value_counts().plot.pie()\n", encoding="utf-8")
+    s, script, _ = _guide_run(tmp_path, ["n", "3", str(py), "1", "", "q"])
+    assert "suggestion(s)" in script.text and "Pie chart" in script.text
+    assert "In your code:" in script.text  # the /describe explanation
+
+
+def test_guide_run_script_with_automatic_help(tmp_path):
+    py = tmp_path / "ok.py"
+    py.write_text("total = 1 + 1\n", encoding="utf-8")
+    s, script, _ = _guide_run(tmp_path, ["n", "4", str(py), "q"])
+    assert "the script finished" in script.text and s.ns["total"] == 2
+
+
+def test_guide_without_ai_points_to_setup(tmp_path):
+    s, script, _ = _guide_run(tmp_path, ["n", "2", "q"])
+    assert "Choose 8" in script.text
+
+
+def test_guide_python_mode_returns_to_menu(tmp_path):
+    called = []
+    s, script, _ = _guide_run(tmp_path, ["n", "5", "q"], repl=lambda: called.append(1))
+    assert called == [1] and "Python prompt" in script.text
+
+
+def test_guide_ctrl_c_leaves_cleanly(tmp_path):
+    s, script, rc = _guide_run(tmp_path, [])  # input ends immediately (EOF)
+    assert rc == 0 and "Goodbye" in script.text

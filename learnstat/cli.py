@@ -118,14 +118,17 @@ def _repl(s: Session, data: str | None) -> int:
     ready = ["pd", "np"]
     if data:
         s.ns["df"] = s.read_csv(data)
+    if "df" in s.ns:
         ready.insert(0, "df")
-    print(f"learnstat REPL - AI: {s.ai_status}. Ready: {', '.join(ready)}. Type /help for commands, /ai to change the AI, Ctrl+Z/Ctrl+D to exit.")
+    print(f"learnstat REPL - AI: {s.ai_status}. Ready: {', '.join(ready)}. Type /help for commands, /ai to change the AI, 'menu' to go back, Ctrl+Z/Ctrl+D to exit.")
     buffer: list[str] = []
     while True:
         try:
             line = input("... " if buffer else ">>> ")
         except (EOFError, KeyboardInterrupt):
             print()
+            return 0
+        if not buffer and line.strip().lower() in ("menu", "back", "exit", "quit", "exit()", "quit()"):
             return 0
         if not buffer and is_command(line):
             print(s.command(line))
@@ -205,18 +208,6 @@ def cmd_config(args) -> int:
     return 0
 
 
-def _ask_data() -> str | None:
-    try:
-        print()
-        path = input("Dataset to load (CSV/Excel path, Enter to skip): ").strip().strip('"')
-    except (EOFError, KeyboardInterrupt):
-        return None
-    if path and not Path(path).exists():
-        print(f"  '{path}' was not found - starting without a dataset.")
-        return None
-    return path or None
-
-
 def _start(args, run_setup: bool) -> int:
     """The guided start: (optional) AI setup, a quick AI check, then the interactive session."""
     from . import config
@@ -251,8 +242,10 @@ def _start(args, run_setup: bool) -> int:
                 print()
                 print(f"X  {a.last_error}")
                 print("   Continuing with offline rules. Type /ai in the session to fix it.")
+    from .guide import run_guide
+
     s = _session(args)
-    return _repl(s, args.data or _ask_data())
+    return run_guide(s, repl=lambda: _repl(s, None), data=args.data)
 
 
 def cmd_setup(args) -> int:

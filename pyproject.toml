@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "learnstat"
-version = "0.2.0"
+version = "0.2.1"
 description = "An AI-assisted learning companion for statistical analysis with pandas, NumPy, SciPy and Matplotlib."
 readme = "README.md"
 requires-python = ">=3.10"
