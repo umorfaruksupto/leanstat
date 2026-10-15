@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "learnstat"
+version = "0.1.0"
+description = "An AI-assisted learning companion for statistical analysis with pandas, NumPy, SciPy and Matplotlib."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+viz = ["matplotlib>=3.7"]
+stats = ["scipy>=1.10"]
+ai = ["anthropic>=1.0"]
+jupyter = ["ipython>=8.0"]
+all = ["matplotlib>=3.7", "scipy>=1.10", "anthropic>=1.0", "ipython>=8.0"]
+dev = ["pytest>=7", "matplotlib>=3.7", "scipy>=1.10", "ipython>=8.0"]
+
+[project.scripts]
+learnstat = "learnstat.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["learnstat*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
