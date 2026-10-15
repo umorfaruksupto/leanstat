@@ -1,7 +1,7 @@
-"""The guided home screen: students pick numbers from a menu instead of learning commands.
+"""Minimal guided start: pick a data file, then write pandas / NumPy code.
 
-After the AI is set up, ``learnstat`` shows this menu. Every action asks for what it
-needs in plain English (pick a file in a window, type a question) and prints the result.
+The Python prompt is the main place to work; ``menu`` opens a one-line menu for the
+extras (AI questions, script checks, lessons, AI settings).
 """
 
 from __future__ import annotations
@@ -16,40 +16,16 @@ from .setup import Cancelled, IO, run_wizard
 DATA_TYPES = [("Data files", "*.csv *.tsv *.txt *.xlsx *.xls *.json *.parquet"), ("All files", "*.*")]
 SCRIPT_TYPES = [("Python files", "*.py"), ("All files", "*.*")]
 
-MENU = """
-What would you like to do?
+MENU = "1 summary | 2 ask AI | 3 check script | 4 run script | 5 code | 6 learn | 7 load data | 8 AI | ? help | q quit"
 
-  1) See a summary of my data
-  2) Ask the AI a question about my data
-  3) Get suggestions for a Python script
-  4) Run a Python script with automatic help
-  5) Write Python code here (my data is ready as "df")
-  6) Learn a statistics topic
-  7) Load a different data file
-  8) Change the AI (company, key, model)
-  9) Help
-  q) Quit"""
-
-HELP_TEXT = """
-How learnstat works
--------------------
-1  Shows what is in your data: columns, types, missing values and possible problems.
-2  Type any question in your own words, for example "which column has the most missing values?".
-3  Pick a Python file. learnstat reads it (without running it) and suggests better statistics
-   or charts for your data. Enter a suggestion's number to get it explained.
-4  Runs your Python file. If it crashes on a simple mistake (like a misspelled column) learnstat
-   explains it and can fix it for you.
-5  A Python prompt with your data already loaded as df. Type "menu" to come back here.
-   Inside it, lines starting with / are shortcuts, and /help lists them.
-6  Short lessons, for example "t-test", "correlation" or "missing values".
-7  Load another file.     8  Switch to another AI company or key.
-
-The AI is optional: without it learnstat still gives rule-based suggestions and explanations."""
-
-PYTHON_TIPS = (
-    'Python prompt - your data is "df". Try: df.head()  or  df.describe()\n'
-    '  Type /help for shortcuts, "menu" to go back to the menu.'
-)
+HELP_TEXT = """1 summary     columns, types, missing values, problems
+2 ask AI      ask anything about your data
+3 check       suggestions for a .py file (not run)
+4 run         run a .py file; simple mistakes are explained and fixed
+5 code        pandas / NumPy prompt with df ready ("menu" returns here)
+6 learn       short lesson on a topic
+7 load data   CSV or Excel
+8 AI          change company, key or model"""
 
 
 def pick_file(title: str, types: list[tuple[str, str]]) -> str | None:
@@ -74,19 +50,18 @@ def _clean(path: str) -> str:
     return path.strip().strip("\"'")
 
 
-def ask_file(io: IO, pick: Callable, what: str, types: list[tuple[str, str]]) -> Path | None:
-    answer = io.line(f"\nChoose your {what}. Press Enter to browse, or paste / drag the file here (b = back): ")
-    if answer.lower() in ("b", "back"):
+def ask_file(io: IO, pick: Callable, what: str, types: list[tuple[str, str]], skip: str = "b") -> Path | None:
+    answer = io.line(f"{what} (Enter = browse, {skip} = {'skip' if skip == 's' else 'back'}): ")
+    if answer.lower() in ("b", "back", "s", "skip"):
         return None
     if not answer:
-        chosen = pick(f"Choose your {what}", types)
-        if not chosen:
-            io.say("No file chosen. You can also paste the full path to the file.")
+        answer = pick(f"Choose {what}", types) or ""
+        if not answer:
+            io.say("No file chosen. Paste the path instead.")
             return None
-        answer = chosen
     path = Path(_clean(answer)).expanduser()
     if not path.is_file():
-        io.say(f"I can't find '{path}'. Check the name, or press Enter next time to browse for it.")
+        io.say(f"Not found: {path}")
         return None
     return path
 
@@ -105,13 +80,12 @@ def load_dataset(s: Session, io: IO, path: Path):
         else:
             df = s.read_csv(path)
     except ImportError as e:
-        io.say(f"Reading {suffix} files needs an extra package: {e}")
+        io.say(f"Missing package for {suffix} files: {e}")
         return None
     except Exception as e:
-        io.say(f"I couldn't read that file as data ({type(e).__name__}: {e}).")
+        io.say(f"Could not read the file: {type(e).__name__}: {e}")
         return None
     s.ns["df"] = df
-    io.say('\nYour data is ready, and is available as "df" when you write Python code.')
     return df
 
 
@@ -120,22 +94,17 @@ def load_dataset(s: Session, io: IO, path: Path):
 
 
 def _summary(s: Session, io: IO) -> None:
-    if not s.datasets:
-        io.say("No data is loaded yet - choose 7 to load a file.")
-        return
-    io.say("\n" + s.profile_markdown())
+    io.say(s.profile_markdown() if s.datasets else "No data loaded - choose 7.")
 
 
 def _ask_ai(s: Session, io: IO) -> None:
     if not s.assistant:
-        io.say(f"The AI is {s.ai_status}. Choose 8 to set one up - or use 6 for built-in lessons.")
+        io.say("No AI set up - choose 8.")
         return
-    io.say('\nAsk anything about your data. Example: "which columns have missing values?"')
     while True:
-        question = io.line("\nYour question (Enter to go back): ")
+        question = io.line("Question (Enter = back): ")
         if not question:
             return
-        io.say("\nThinking ...")
         io.say(s.command(f"/ask {question}"))
 
 
@@ -147,7 +116,7 @@ def _read_script(io: IO, pick: Callable) -> tuple[Path, str] | None:
     try:
         compile(code, str(path), "exec")
     except SyntaxError as e:
-        io.say(f"There is a syntax error on line {e.lineno}: {e.msg}. Fix it and try again.")
+        io.say(f"Syntax error, line {e.lineno}: {e.msg}")
         return None
     return path, code
 
@@ -159,17 +128,15 @@ def _check_script(s: Session, io: IO, pick: Callable) -> None:
     path, code = got
     found = s.check(code, show=False, extra_frames=s.profiles_for_code(code, base_dir=path.parent))
     if not found:
-        io.say("\nNo suggestions - the rules found nothing to improve for this data.")
+        io.say("No suggestions.")
         return
-    io.say(f"\n{len(found)} suggestion(s):\n")
     for sug in found:
-        io.say(sug.render())
-        io.say("")
+        io.say(sug.render() + "\n")
     while True:
-        pick_id = io.line("Enter a suggestion number to have it explained (Enter to go back): ")
-        if not pick_id:
+        number = io.line("Explain suggestion # (Enter = back): ")
+        if not number:
             return
-        io.say("\n" + s.command(f"/describe {pick_id.lstrip('#')}") + "\n")
+        io.say(s.command(f"/describe {number.lstrip('#')}"))
 
 
 def _run_script(s: Session, io: IO, pick: Callable) -> None:
@@ -182,25 +149,22 @@ def _run_script(s: Session, io: IO, pick: Callable) -> None:
     s.check(code, extra_frames=s.profiles_for_code(code, base_dir=path.parent))
     result = s.run(code, check=False, filename=str(path))
     if result.ok:
-        io.say("\nDone - the script finished.")
-        if result.changed and io.yes("learnstat corrected something. Save a corrected copy next to your file?"):
+        io.say("Done.")
+        if result.changed and io.yes("Save the corrected copy?"):
             out = path.with_suffix(".fixed.py")
             out.write_text(result.final_code, encoding="utf-8")
-            io.say(f"Saved {out} (your original is unchanged).")
-    else:
-        io.say("\nThe script stopped with an error.")
-        if io.yes("Explain what went wrong?"):
-            io.say("\n" + s.command("/describe"))
+            io.say(f"Saved {out}")
+    elif io.yes("Stopped with an error. Explain it?"):
+        io.say(s.command("/describe"))
 
 
 def _learn(s: Session, io: IO) -> None:
-    io.say('\nExamples: t-test, correlation, missing values, skewed data, pie charts, histograms')
-    topic = io.line("Topic (Enter for a lesson about your latest suggestion): ")
-    io.say("\n" + s.command(f"/learn {topic}".strip()))
+    topic = io.line("Topic, e.g. t-test, correlation (Enter = latest suggestion): ")
+    io.say(s.command(f"/learn {topic}".strip()))
 
 
-def _load(s: Session, io: IO, pick: Callable) -> None:
-    path = ask_file(io, pick, "data file (CSV or Excel)", DATA_TYPES)
+def _load(s: Session, io: IO, pick: Callable, skip: str = "b") -> None:
+    path = ask_file(io, pick, "Data file", DATA_TYPES, skip=skip)
     if path is not None:
         load_dataset(s, io, path)
 
@@ -208,7 +172,7 @@ def _load(s: Session, io: IO, pick: Callable) -> None:
 def _change_ai(s: Session, io: IO) -> None:
     run_wizard(io)
     s.connect_ai()
-    io.say(f"\nAI: {s.ai_status}")
+    io.say(f"AI: {s.ai_status}")
 
 
 # ---------------------------------------------------------------------------
@@ -216,20 +180,19 @@ def _change_ai(s: Session, io: IO) -> None:
 
 def run_guide(s: Session, io: IO | None = None, pick: Callable = pick_file,
               repl: Callable[[], object] | None = None, data: str | None = None) -> int:
-    """Show the home menu until the user quits."""
+    """Load data, open the Python prompt, and offer a one-line menu on request."""
     io = io or IO()
-    io.say("\n" + "=" * 60 + "\n learnstat - learn statistics with Python\n" + "=" * 60)
-    io.say(f"AI: {s.ai_status}")
+    io.say(f"learnstat | AI: {s.ai_status}")
     try:
         if data:
             path = Path(_clean(data)).expanduser()
             if path.is_file():
                 load_dataset(s, io, path)
             else:
-                io.say(f"I can't find '{path}'.")
-        elif io.yes("\nLoad your data file now?"):
+                io.say(f"Not found: {path}")
+        else:
             try:
-                _load(s, io, pick)
+                _load(s, io, pick, skip="s")
             except Cancelled:
                 pass
         actions: dict[str, Callable[[], None]] = {
@@ -240,27 +203,23 @@ def run_guide(s: Session, io: IO | None = None, pick: Callable = pick_file,
             "6": lambda: _learn(s, io),
             "7": lambda: _load(s, io, pick),
             "8": lambda: _change_ai(s, io),
-            "9": lambda: io.say(HELP_TEXT),
+            "?": lambda: io.say(HELP_TEXT),
         }
         if repl is not None:
-            def python_mode() -> None:
-                io.say("\n" + PYTHON_TIPS)
-                repl()
-            actions["5"] = python_mode
+            actions["5"] = repl
+            repl()  # the Python prompt is the default place to work
         while True:
-            io.say(MENU)
-            choice = io.line("\nType a number: ").lower()
+            io.say("\n" + MENU)
+            choice = io.line("> ").lower()
             if choice in ("q", "quit", "exit"):
                 break
-            action = actions.get(choice)
+            action = actions.get("?" if choice in ("h", "help") else choice)
             if action is None:
-                io.say("Please type one of the numbers in the menu (or q to quit).")
                 continue
             try:
                 action()
             except Cancelled:
-                io.say("\n(back to the menu)")
+                pass
     except Cancelled:
         pass
-    io.say("\nGoodbye - your dataset profiles are saved in .learnstat/ so next time is faster.")
     return 0

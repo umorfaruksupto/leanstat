@@ -24,32 +24,27 @@ pip install -e ".[all]"        # pandas, numpy, matplotlib, scipy, ipython
 pip install -e .               # core only: profiling, rules, recovery
 ```
 
-### Quick start (no commands to learn)
+### Quick start
 
 ```bash
 pip install learnstat
 learnstat
 ```
 
-That is all. learnstat walks you through everything in plain English:
-
-1. **Pick your AI** (optional): choose the company, paste your key, choose a model. learnstat tests it and says OK or what is wrong.
-2. **Choose your data**: press Enter and a normal file window opens (CSV or Excel), or drag the file into the terminal.
-3. **Pick what to do from a menu** by typing a number:
+1. Choose your AI company, paste the key, pick a model. learnstat tests it and says OK or what is wrong (optional; skip it and everything works offline).
+2. Press Enter to pick your CSV or Excel file in a normal window.
+3. You are at a Python prompt with `df`, `pd` (pandas) and `np` (NumPy) ready. Write ordinary pandas / NumPy code:
 
 ```
-  1) See a summary of my data
-  2) Ask the AI a question about my data
-  3) Get suggestions for a Python script
-  4) Run a Python script with automatic help
-  5) Write Python code here (my data is ready as "df")
-  6) Learn a statistics topic
-  7) Load a different data file
-  8) Change the AI (company, key, model)
-  9) Help
+>>> df.groupby("country")["income"].mean()
+>>> np.log(df["income"]).describe()
 ```
 
-Nothing else needs to be memorised: every option asks for what it needs, and option 9 explains the menu. Skip the AI and everything still works with built-in rules.
+learnstat suggests better statistics and charts as you go, and explains and fixes simple mistakes. Type `/help` for the shortcuts, or `menu` for a one-line menu:
+
+```
+1 summary | 2 ask AI | 3 check script | 4 run script | 5 code | 6 learn | 7 load data | 8 AI | ? help | q quit
+```
 
 ### Add an AI (optional)
 

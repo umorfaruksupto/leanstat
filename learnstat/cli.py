@@ -120,7 +120,7 @@ def _repl(s: Session, data: str | None) -> int:
         s.ns["df"] = s.read_csv(data)
     if "df" in s.ns:
         ready.insert(0, "df")
-    print(f"learnstat REPL - AI: {s.ai_status}. Ready: {', '.join(ready)}. Type /help for commands, /ai to change the AI, 'menu' to go back, Ctrl+Z/Ctrl+D to exit.")
+    print(f"Ready: {', '.join(ready)}   |   /help   |   menu")
     buffer: list[str] = []
     while True:
         try:
@@ -217,15 +217,14 @@ def _start(args, run_setup: bool) -> int:
     if not _interactive():
         print("learnstat start needs an interactive terminal. Try: learnstat --help")
         return 2
+    ai_error = None
     if not args.no_ai:
         cfg_ready = config.resolve().is_configured
         if run_setup:
             run_wizard()
         elif not cfg_ready and not config.skip_setup():
-            print()
-            print("No AI assistant is set up yet (learnstat also works offline with built-in rules).")
             try:
-                answer = input("Set one up now? [Y]es / [n]ot now / [never]: ").strip().lower()
+                answer = input("No AI set up. Set one up now? [Y/n/never] ").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 answer = "n"
             if answer in ("", "y", "yes"):
@@ -233,18 +232,13 @@ def _start(args, run_setup: bool) -> int:
             elif answer == "never":
                 config.set_skip_setup(True)
         a = LLMAssistant()
-        if a.available():
-            print()
-            print(f"Checking AI: {a.cfg.provider_name} / {a.model} ...", end=" ", flush=True)
-            if a.test(timeout=15) is not None:
-                print("OK")
-            else:
-                print()
-                print(f"X  {a.last_error}")
-                print("   Continuing with offline rules. Type /ai in the session to fix it.")
+        if a.available() and a.test(timeout=15) is None:
+            ai_error = a.last_error
     from .guide import run_guide
 
     s = _session(args)
+    if ai_error:
+        s.assistant, s.ai_status = None, f"offline ({ai_error}) - menu 8 to fix"
     return run_guide(s, repl=lambda: _repl(s, None), data=args.data)
 
 
@@ -258,8 +252,7 @@ def cmd_setup(args) -> int:
     from . import config
     if config.resolve().is_configured:
         try:
-            print()
-            go = input("Start learnstat now? [Y/n] ").strip().lower() in ("", "y", "yes")
+            go = input("Start now? [Y/n] ").strip().lower() in ("", "y", "yes")
         except (EOFError, KeyboardInterrupt):
             go = False
         if go:

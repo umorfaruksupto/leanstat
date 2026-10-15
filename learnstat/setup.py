@@ -64,12 +64,12 @@ RULE = "-" * 60
 
 
 def choose_provider(io: IO) -> providers.Provider:
-    io.say("\nWhich AI company do you want to use?\n")
+    io.say("\nAI company:\n")
     choices = providers.all_choices()
     for i, p in enumerate(choices, 1):
         io.say(f"  {i:>2}) {p.name}")
     while True:
-        answer = io.line("\nNumber (or q to quit): ").lower()
+        answer = io.line("\nNumber (q = quit): ").lower()
         if answer in ("q", "quit", "exit"):
             raise Cancelled
         if answer.isdigit() and 1 <= int(answer) <= len(choices):
@@ -77,7 +77,7 @@ def choose_provider(io: IO) -> providers.Provider:
         by_name = [p for p in choices if answer and (answer == p.id or answer in p.name.lower())]
         if len(by_name) == 1:
             return by_name[0]
-        io.say(f"Please type a number from 1 to {len(choices)}.")
+        io.say(f"Type a number from 1 to {len(choices)}.")
 
 
 def ask_endpoint(io: IO, provider: providers.Provider) -> str:
@@ -85,33 +85,31 @@ def ask_endpoint(io: IO, provider: providers.Provider) -> str:
         if provider.note:
             io.say(f"\n{provider.note}")
         return provider.base_url
-    io.say("\nAny OpenAI-compatible server works (it must offer /chat/completions).")
     while True:
-        url = io.line("Base URL (for example https://api.example.com/v1): ")
+        url = io.line("Base URL (e.g. https://api.example.com/v1): ")
         if url.startswith(("http://", "https://")):
             return url
-        io.say("The address must start with http:// or https://")
+        io.say("Must start with http:// or https://")
 
 
 def ask_key(io: IO, provider: providers.Provider) -> str:
     if not provider.needs_key:
         return ""
     if provider.key_url:
-        io.say(f"\nCreate a key at {provider.key_url}")
-    io.say("Paste your API key (it is hidden while you type; right-click or Ctrl+V pastes in most terminals).")
+        io.say(f"\nGet a key: {provider.key_url}")
     while True:
-        key = io.hidden("API key: ")
+        key = io.hidden("API key (hidden, paste it): ")
         if key:
             return key
-        io.say("The key is empty - paste it and press Enter (or Ctrl+C to quit).")
+        io.say("Empty - paste the key, or Ctrl+C to quit.")
 
 
 def load_models(io: IO, d: Draft) -> str | None:
     """Fetch the model list. Returns an error message when the key itself is the problem."""
-    io.say("\nChecking your key and loading the available models ...")
+    io.say("\nChecking key ...")
     try:
         d.models = fetch_models(d.config())
-        io.say(f"  OK - {len(d.models)} models available.")
+        io.say(f"  OK, {len(d.models)} models")
         return None
     except AIError as e:
         if e.fatal:
@@ -136,7 +134,7 @@ def choose_model(io: IO, d: Draft) -> str:
                 io.say(f"  {i:>2}) {m}")
             if len(view) > 40:
                 io.say(f"  ... and {len(view) - 40} more - type part of a name to filter.")
-        answer = io.line("\nPick a number, type part of a name to filter, or type a full model name: ")
+        answer = io.line("\nModel (number, or type to filter): ")
         if not answer:
             continue
         if answer.isdigit() and 1 <= int(answer) <= len(view):
@@ -164,7 +162,7 @@ def verify(io: IO, d: Draft) -> str | None:
     reply = assistant.test()
     if reply is None:
         return assistant.last_error or "the test request failed"
-    io.say(f"  OK - the model answered in {time.monotonic() - started:.1f}s.")
+    io.say(f"  OK ({time.monotonic() - started:.1f}s)")
     return None
 
 
@@ -180,11 +178,10 @@ def _save(io: IO, d: Draft, tested: bool) -> str:
     path = config.save_profile(name, d.provider.id, d.base_url, d.api_key, d.model, activate=True)
     if tested:
         io.say("")
-        io.say(f"Ready. Saved '{name}' ({d.model}) and made it the active AI.")
+        io.say(f"Saved '{name}' ({d.model}) - now active.")
     else:
         io.say("")
-        io.say(f"Saved '{name}' ({d.model}) without a successful test.")
-    io.say(f"Settings file: {path}")
+        io.say(f"Saved '{name}' ({d.model}), not tested.")
     return name
 
 
@@ -276,7 +273,7 @@ def run_wizard(io: IO | None = None) -> str | None:
             if not saved:
                 return add_provider(io)
             active = config.active_name()
-            io.say("\nSaved AI accounts:\n")
+            io.say("\nSaved AIs:\n")
             names = list(saved)
             for i, n in enumerate(names, 1):
                 io.say(f"  {i:>2}) {describe_profile(n, saved[n], n == active)}")
@@ -304,5 +301,5 @@ def run_wizard(io: IO | None = None) -> str | None:
                 continue
             io.say("Please type a number, n, d, s or q.")
     except Cancelled:
-        io.say("\nSetup cancelled - nothing was changed after the last saved step.")
+        io.say("\nCancelled.")
         return config.active_name()
