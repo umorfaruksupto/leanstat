@@ -8,7 +8,8 @@ def shell(tmp_path, monkeypatch):
     from IPython.testing.globalipapp import start_ipython
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("LEARNSTAT_CONFIG", str(tmp_path / "no-config.json"))
+    monkeypatch.setenv("LEARNSTAT_API_KEY", "")
     ip = start_ipython()
     ip.run_line_magic("load_ext", "learnstat")
     yield ip

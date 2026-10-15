@@ -20,11 +20,35 @@ From PyPI: <https://pypi.org/project/learnstat/>
 
 ```bash
 pip install "learnstat[all]"      # from PyPI
-pip install -e ".[all]"        # pandas, numpy, matplotlib, scipy, anthropic, ipython
-pip install -e .               # core only: profiling, rules, recovery (no AI)
+pip install -e ".[all]"        # pandas, numpy, matplotlib, scipy, ipython
+pip install -e .               # core only: profiling, rules, recovery
 ```
 
-The AI features are optional. With the `anthropic` package and credentials set up (`ANTHROPIC_API_KEY` or `ant auth login`), explanations get tailored to your dataset, Claude reviews code with `/review`, and Claude can propose fixes for errors the rules can't handle. Without them, everything else still works offline. The default model is `claude-opus-5-5`; set `LEARNSTAT_MODEL` to choose another.
+### Add an AI (optional)
+
+Just run `learnstat`. If no AI is set up yet it offers a guided setup, and you can repeat it any time with `learnstat setup` (or `/ai` inside a session):
+
+1. **Choose the company**: OpenAI, Anthropic, Google Gemini, xAI, Mistral, DeepSeek, Groq, Together, OpenRouter, Ollama, LM Studio, or any other OpenAI-compatible endpoint.
+2. **Paste your API key**. The input is hidden, and local servers such as Ollama need no key.
+3. **Pick a model** from the list your key can actually use. Type part of a name to filter.
+4. **learnstat checks it** with a live test request and shows `OK` or the exact problem (rejected key, unknown model, no connection, quota), with options to fix it.
+5. It saves the account and starts the interactive session.
+
+Several accounts can be saved and switched: run `learnstat setup` and pick a number, or use `/ai use <name>` in a session. The AI features need no extra package.
+
+For scripts and CI there is a non-interactive route:
+
+```bash
+learnstat config set api_key  sk-your-key
+learnstat config set base_url https://openrouter.ai/api/v1    # default: the active company's endpoint
+learnstat config set model    openai/gpt-4o-mini
+learnstat config list          # saved accounts       learnstat config use <name>   # switch
+learnstat config test          # one tiny request     learnstat config show         # key is masked
+```
+
+Accounts are stored in `~/.learnstat/config.json` (`learnstat config path` prints the location), readable only by you where the OS allows it. The environment variables `LEARNSTAT_API_KEY`, `LEARNSTAT_BASE_URL` and `LEARNSTAT_MODEL` override the active account for one run.
+
+With an AI configured, explanations are tailored to your dataset, `/review` checks code for issues the rules miss, and the AI can propose fixes for errors the rules can't handle. Without it, everything else still works offline. Pass `--no-ai` to switch it off for one run.
 
 ## Use it
 
@@ -62,6 +86,7 @@ learnstat check analysis.py            # suggestions only, nothing is executed
 learnstat watch analysis.py            # re-checks every time you save the file
 learnstat run analysis.py              # runs with suggestions and guarded recovery
 learnstat repl --data survey.csv       # interactive, with /commands
+learnstat config show                  # AI settings (see "Add an AI")
 ```
 
 ### Plain Python
@@ -118,7 +143,10 @@ learnstat/
   knowledge.py    offline explanations behind /describe, /alternatives, /learn
   recovery.py     error diagnosis, fix proposal, validation, bounded retry
   safety.py       detection of destructive side effects
-  llm.py          optional Claude backend
+  llm.py          optional AI backend (OpenAI-compatible endpoint)
+  config.py       saved AI accounts: provider, api_key, base_url, model
+  providers.py    presets for the AI companies
+  setup.py        guided terminal setup (company -> key -> model -> check)
   session.py      ties it together; read_csv/track/check/run
   commands.py     slash commands
   ipython_ext.py  %load_ext learnstat

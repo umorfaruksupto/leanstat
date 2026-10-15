@@ -20,8 +20,9 @@ HELP = """learnstat commands
   /suggestions         list suggestions from this session
   /accept [id]         accept a suggestion (records the decision; offers the code - you paste/run it)
   /reject [id] [why]   keep your approach (the decision is recorded so it is not suggested again)
-  /review              ask Claude to review the last code for issues the rules may miss
+  /review              ask the AI to review the last code for issues the rules may miss
   /ask <question>      ask a question about your data or code (AI)
+  /ai [list|use <name>]  choose the AI company, key and model (guided), or switch saved accounts
   /status              show AI status and loaded datasets
   /help                this help"""
 
@@ -256,6 +257,27 @@ def cmd_ask(session: "Session", rest: str) -> str:
     )
 
 
+def cmd_ai(session: "Session", rest: str) -> str:
+    from . import config
+    from .setup import describe_profile, run_wizard, use_saved, IO
+
+    sub, _, arg = rest.partition(" ")
+    if sub == "list":
+        saved, active = config.profiles(), config.active_name()
+        return "\n".join(describe_profile(n, p, n == active) for n, p in saved.items()) or "No saved AI accounts. Run /ai to add one."
+    if sub == "use":
+        if arg not in config.profiles():
+            return f"No saved account '{arg}'. Use /ai list."
+        if not use_saved(IO(), arg):
+            return f"Kept the current AI: {session.ai_status}"
+    elif sub in ("", "setup"):
+        run_wizard()
+    else:
+        return "Usage: /ai            guided setup: company -> key -> model -> check\n       /ai list       saved accounts\n       /ai use <name> switch account"
+    session.connect_ai()
+    return f"AI: {session.ai_status}"
+
+
 def cmd_status(session: "Session", rest: str) -> str:
     names = ", ".join(session.datasets) or "none"
     return f"AI: {session.ai_status}\nDatasets: {names}\nMemory directory: {session.memory.directory}"
@@ -274,6 +296,7 @@ COMMANDS: dict[str, Callable[["Session", str], str]] = {
     "review": cmd_review,
     "ask": cmd_ask,
     "status": cmd_status,
+    "ai": cmd_ai,
     "help": lambda s, r: HELP,
 }
 

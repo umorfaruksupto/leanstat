@@ -2,7 +2,7 @@
 
 Each concept explains the statistical idea, the purpose of the suggested
 function, when it is appropriate and when something else would be better.
-When the Claude backend is available these are used as grounding and then
+When the AI backend is available these are used as grounding and then
 tailored to the user's dataset; without AI they are shown as-is, filled in with
 the dataset facts recorded on the suggestion.
 """

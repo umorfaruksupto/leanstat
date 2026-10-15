@@ -10,7 +10,7 @@ from typing import Callable
 import pandas as pd
 
 from .advisor import CodeAdvisor, call_name
-from .llm import ClaudeAssistant
+from .llm import LLMAssistant
 from .memory import DatasetMemory, MemoryStore
 from .profile import DatasetProfile, profile_dataframe
 from .recovery import Diagnosis, Executor, Fix, RunResult
@@ -25,13 +25,13 @@ class Session:
     Parameters
     ----------
     memory_dir: where dataset profiles (Markdown + JSON) are kept.
-    ai: ``"auto"`` (use Claude if available), ``True`` (expect it) or ``False`` (never).
+    ai: ``"auto"`` (use the configured AI if available), ``True`` (expect it) or ``False`` (never).
     max_attempts: maximum number of automatic corrections per failing statement.
     auto_fix: set False to only diagnose errors, never correct them.
     confirm: callback ``(question) -> bool`` used for side-effecting code and for
         corrections that need approval. Without it those are refused.
     namespace: the dict user code runs in (IPython passes ``user_ns``).
-    ai_review: also ask Claude to review every checked snippet (slower, costs tokens).
+    ai_review: also ask the AI to review every checked snippet (slower, costs tokens).
     """
 
     def __init__(
@@ -63,16 +63,23 @@ class Session:
         self.last_result: RunResult | None = None
         self.on_accept: Callable[[str], None] | None = None
 
-        self.assistant: ClaudeAssistant | None = None
+        self.assistant: LLMAssistant | None = None
         self.ai_status = "disabled"
+        self._ai_mode = ai
         if ai:
-            assistant = ClaudeAssistant()
-            if assistant.available():
-                self.assistant, self.ai_status = assistant, f"enabled ({assistant.model})"
-            else:
-                self.ai_status = f"unavailable - {assistant.last_error}; using offline rules"
-                if ai is True:
-                    self.out(f"[learnstat] AI requested but {self.ai_status}")
+            self.connect_ai()
+
+    def connect_ai(self) -> None:
+        """(Re)load the AI from the saved settings - call again after ``learnstat setup`` or ``/ai``."""
+        self.assistant, self.ai_status = None, "disabled"
+        assistant = LLMAssistant()
+        if assistant.available():
+            self.assistant = assistant
+            self.ai_status = f"enabled ({assistant.cfg.provider_name} / {assistant.model})"
+        else:
+            self.ai_status = f"not set up - {assistant.last_error}; using offline rules"
+            if self._ai_mode is True:
+                self.out(f"[learnstat] AI requested but {self.ai_status}")
 
     # ------------------------------------------------------------------
     # Data loading - thin wrappers that keep pandas' signatures and return
@@ -264,7 +271,7 @@ class Session:
             if data and data.get("explanation"):
                 d.next_step = data["explanation"]
             return None
-        return Fix("ai", "Claude suggests: " + data["explanation"], data["fixed_code"].strip("\n"))
+        return Fix("ai", "AI suggests: " + data["explanation"], data["fixed_code"].strip("\n"))
 
     # ------------------------------------------------------------------
     # Commands

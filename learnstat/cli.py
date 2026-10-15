@@ -1,4 +1,4 @@
-"""Command-line interface: ``learnstat profile|check|watch|run|repl``."""
+"""Command-line interface: ``learnstat`` (guided start), ``setup``, ``profile|check|watch|run|repl|config``."""
 
 from __future__ import annotations
 
@@ -107,16 +107,19 @@ def cmd_run(args) -> int:
 
 
 def cmd_repl(args) -> int:
-    s = _session(args)
+    return _repl(_session(args), args.data)
+
+
+def _repl(s: Session, data: str | None) -> int:
     import numpy as np
     import pandas as pd
 
     s.ns.update(pd=pd, np=np)
     ready = ["pd", "np"]
-    if args.data:
-        s.ns["df"] = s.read_csv(args.data)
+    if data:
+        s.ns["df"] = s.read_csv(data)
         ready.insert(0, "df")
-    print(f"learnstat REPL - AI: {s.ai_status}. Ready: {', '.join(ready)}. Type /help for commands, Ctrl+Z/Ctrl+D to exit.")
+    print(f"learnstat REPL - AI: {s.ai_status}. Ready: {', '.join(ready)}. Type /help for commands, /ai to change the AI, Ctrl+Z/Ctrl+D to exit.")
     buffer: list[str] = []
     while True:
         try:
@@ -141,11 +144,160 @@ def cmd_repl(args) -> int:
             print(repr(result.value))
 
 
+def _interactive() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def cmd_config(args) -> int:
+    from . import config
+    from .setup import describe_profile
+
+    action = args.action
+    try:
+        if action == "path":
+            print(config.config_path())
+        elif action == "list":
+            saved, active = config.profiles(), config.active_name()
+            for name, prof in saved.items():
+                print(describe_profile(name, prof, name == active))
+            if not saved:
+                print("No saved AI accounts. Run: learnstat setup")
+        elif action == "show":
+            cfg = config.resolve()
+            stored = config.profiles().get(cfg.profile or "", {})
+            print(f"profile   {cfg.profile or '(none)'}   provider {cfg.provider}")
+            for key in config.KEYS:
+                value = getattr(cfg, key)
+                shown = config.mask(value) if key == "api_key" else value
+                env = config.ENV_VARS[key]
+                source = "env " + env if os.environ.get(env, "").strip() else ("saved" if key in stored else "default")
+                print(f"{key:9} {shown}   [{source}]")
+            print(f"file      {config.config_path()}")
+        elif action in ("use", "remove"):
+            if not args.key:
+                print(f"usage: learnstat config {action} <profile>")
+                return 2
+            path = config.set_active(args.key) if action == "use" else config.remove_profile(args.key)
+            print(f"{action} {args.key} -> {path}")
+        elif action in ("set", "unset"):
+            if not args.key or (action == "set" and args.value is None):
+                print("usage: learnstat config set <api_key|base_url|model> <value>")
+                print("       learnstat config unset <key>")
+                return 2
+            path = config.set_value(args.key, args.value) if action == "set" else config.unset_value(args.key)
+            print(f"{action} {args.key} -> {path}")
+        elif action == "test":
+            from .llm import LLMAssistant
+
+            a = LLMAssistant()
+            if not a.available():
+                print(f"AI not ready: {a.last_error}")
+                return 1
+            print(f"Testing {a.cfg.chat_url} with model {a.model} ...")
+            reply = a.test()
+            if reply is None:
+                print(f"X  {a.last_error}")
+                return 1
+            print(f"OK - {a.cfg.provider_name} / {a.model} replied: {reply[:80]}")
+    except KeyError as e:
+        print(e.args[0])
+        return 2
+    return 0
+
+
+def _ask_data() -> str | None:
+    try:
+        print()
+        path = input("Dataset to load (CSV/Excel path, Enter to skip): ").strip().strip('"')
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if path and not Path(path).exists():
+        print(f"  '{path}' was not found - starting without a dataset.")
+        return None
+    return path or None
+
+
+def _start(args, run_setup: bool) -> int:
+    """The guided start: (optional) AI setup, a quick AI check, then the interactive session."""
+    from . import config
+    from .llm import LLMAssistant
+    from .setup import IO, run_wizard
+
+    if not _interactive():
+        print("learnstat start needs an interactive terminal. Try: learnstat --help")
+        return 2
+    if not args.no_ai:
+        cfg_ready = config.resolve().is_configured
+        if run_setup:
+            run_wizard()
+        elif not cfg_ready and not config.skip_setup():
+            print()
+            print("No AI assistant is set up yet (learnstat also works offline with built-in rules).")
+            try:
+                answer = input("Set one up now? [Y]es / [n]ot now / [never]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = "n"
+            if answer in ("", "y", "yes"):
+                run_wizard()
+            elif answer == "never":
+                config.set_skip_setup(True)
+        a = LLMAssistant()
+        if a.available():
+            print()
+            print(f"Checking AI: {a.cfg.provider_name} / {a.model} ...", end=" ", flush=True)
+            if a.test(timeout=15) is not None:
+                print("OK")
+            else:
+                print()
+                print(f"X  {a.last_error}")
+                print("   Continuing with offline rules. Type /ai in the session to fix it.")
+    s = _session(args)
+    return _repl(s, args.data or _ask_data())
+
+
+def cmd_setup(args) -> int:
+    if not _interactive():
+        print("learnstat setup is interactive. In scripts use: learnstat config set api_key|base_url|model <value>")
+        return 2
+    from .setup import run_wizard
+
+    run_wizard()
+    from . import config
+    if config.resolve().is_configured:
+        try:
+            print()
+            go = input("Start learnstat now? [Y/n] ").strip().lower() in ("", "y", "yes")
+        except (EOFError, KeyboardInterrupt):
+            go = False
+        if go:
+            return _start(args, run_setup=False)
+    return 0
+
+
+def cmd_start(args) -> int:
+    return _start(args, run_setup=False)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="learnstat", description="AI-assisted learning companion for statistics in Python.")
     p.add_argument("--memory-dir", default=os.environ.get("LEARNSTAT_MEMORY", ".learnstat"))
-    p.add_argument("--no-ai", action="store_true", help="never call Claude; use offline rules only")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    p.add_argument("--no-ai", action="store_true", help="never call the AI; use offline rules only")
+    p.add_argument("--data", help="dataset to load when starting the interactive session")
+    sub = p.add_subparsers(dest="cmd")
+
+    sp = sub.add_parser("setup", help="guided AI setup: choose company, enter key, pick model, check, then start")
+    sp.add_argument("--data")
+    sp.set_defaults(fn=cmd_setup)
+
+    sp = sub.add_parser("start", help="start the interactive session (also what plain `learnstat` does)")
+    sp.add_argument("--data")
+    sp.set_defaults(fn=cmd_start)
+
+    sp = sub.add_parser("config", help="scripting access to AI settings: list|use|remove|set|unset|show|test|path")
+    sp.add_argument("action", choices=["list", "use", "remove", "set", "unset", "show", "test", "path"])
+    sp.add_argument("key", nargs="?", help="profile name, or api_key / base_url / model")
+    sp.add_argument("value", nargs="?")
+    sp.set_defaults(fn=cmd_config)
 
     sp = sub.add_parser("profile", help="profile a dataset and write its Markdown memory")
     sp.add_argument("data")
@@ -157,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
         sp = sub.add_parser(name, help=help_)
         sp.add_argument("script")
         sp.add_argument("--data", action="append", help="dataset file(s) the script analyses")
-        sp.add_argument("--ai-review", action="store_true", help="also ask Claude to review the code")
+        sp.add_argument("--ai-review", action="store_true", help="also ask the AI to review the code")
         if name == "watch":
             sp.add_argument("--interval", type=float, default=1.0)
         sp.set_defaults(fn=fn)
@@ -177,6 +329,8 @@ def main(argv: list[str] | None = None) -> int:
     sp.set_defaults(fn=cmd_repl)
 
     args = p.parse_args(argv)
+    if args.cmd is None:
+        return cmd_start(args)
     return args.fn(args)
 
 

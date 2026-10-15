@@ -1,9 +1,9 @@
-"""Optional Claude backend.
+"""Optional AI backend (any OpenAI-compatible chat endpoint).
 
 learnstat works fully without this module: profiling, rule-based advice,
-explanations and mechanical error recovery are all offline. When the
-``anthropic`` package is installed and credentials are available, Claude is
-used to
+explanations and mechanical error recovery are all offline. When an API key
+(or a custom endpoint) is configured - see :mod:`learnstat.config` - the model
+is used to
 
 * tailor /describe, /alternatives and /learn explanations to the dataset,
 * review code for issues the rules do not cover, and
@@ -11,16 +11,18 @@ used to
   the user's confirmation and pass the same validation as rule-based fixes).
 
 Every call degrades gracefully: on any error the caller gets ``None`` and falls
-back to the offline behaviour.
+back to the offline behaviour. Only the standard library is used for HTTP.
 """
 
 from __future__ import annotations
 
 import json
-import os
-from typing import Any
+import re
+import socket
+import urllib.error
+import urllib.request
 
-DEFAULT_MODEL = "claude-opus-5-5"
+from . import config as _config
 
 SYSTEM_PROMPT = """You are learnstat, a statistics and Python mentor embedded in a learning library.
 The user writes and owns their analytical code. Your job is to help them learn: explain reasoning,
@@ -35,89 +37,75 @@ Principles:
   appropriate and when an alternative is better.
 - Keep answers concise and practical, with short code snippets using standard library APIs."""
 
+TIMEOUT_SECONDS = 120
 
-class ClaudeAssistant:
-    def __init__(self, model: str | None = None, effort: str = "medium"):
-        self.model = model or os.environ.get("LEARNSTAT_MODEL", DEFAULT_MODEL)
-        self.effort = effort
-        self._client = None
+
+class LLMAssistant:
+    def __init__(self, cfg: _config.AIConfig | None = None):
+        self.cfg = cfg or _config.resolve()
         self.last_error: str | None = None
         self.disabled = False  # set after an unrecoverable failure (e.g. bad credentials)
 
-    # -- availability -----------------------------------------------------
     @property
-    def client(self):
-        if self._client is None:
-            import anthropic  # optional dependency
+    def model(self) -> str:
+        return self.cfg.model
 
-            self._client = anthropic.Anthropic()
-        return self._client
-
+    # -- availability -----------------------------------------------------
     def available(self) -> bool:
-        try:
-            import anthropic  # noqa: F401
-        except ImportError:
-            self.last_error = "the `anthropic` package is not installed (pip install 'learnstat[ai]')"
-            return False
-        try:
-            _ = self.client
-        except Exception as e:  # missing credentials etc.
-            self.last_error = f"could not create a Claude client: {e}"
+        if self.cfg.needs_key and not self.cfg.api_key:
+            self.last_error = "no AI is set up yet (run: learnstat setup)"
             return False
         return True
 
     # -- low-level --------------------------------------------------------
-    def _create(self, prompt: str, max_tokens: int = 4000, schema: dict | None = None) -> str | None:
-        import anthropic
-
+    def _create(self, prompt: str, max_tokens: int = 4000, json_schema: dict | None = None,
+                timeout: float = TIMEOUT_SECONDS) -> str | None:
         if self.disabled:
             return None
-        params: dict[str, Any] = dict(
-            model=self.model,
-            max_tokens=max_tokens,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-            output_config={"effort": self.effort},
-            # If a safety classifier declines, let the API retry on its recommended fallback model.
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-        )
-        if schema:
-            params["output_config"]["format"] = {"type": "json_schema", "schema": schema}
+        if json_schema:
+            prompt += (
+                "\n\nReply with ONLY a JSON object (no prose, no code fences) matching this JSON Schema:\n"
+                + json.dumps(json_schema)
+            )
+        body = {
+            "model": self.cfg.model,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        }
         try:
-            response = self.client.beta.messages.create(**params)
-        except anthropic.AuthenticationError as e:
-            self.last_error = f"authentication failed: {e}"
-            self.disabled = True
+            payload = _request(self.cfg.chat_url, self.cfg.headers, body, timeout)
+        except AIError as e:
+            self.last_error = str(e)
+            if e.fatal:
+                self.disabled = True
             return None
-        except anthropic.RateLimitError as e:
-            self.last_error = f"rate limited: {e}"
+        try:
+            text = payload["choices"][0]["message"]["content"] or ""
+        except (KeyError, IndexError, TypeError):
+            self.last_error = "unexpected response format - is the base URL an OpenAI-compatible /chat/completions endpoint?"
             return None
-        except anthropic.APIStatusError as e:
-            self.last_error = f"API error {e.status_code}: {e}"
+        text = text.strip()
+        if not text:
+            self.last_error = "the model returned an empty response"
             return None
-        except anthropic.APIConnectionError as e:
-            self.last_error = f"connection error: {e}"
-            return None
-        except Exception as e:  # e.g. no credentials configured - never break the user's session
-            self.last_error = f"{type(e).__name__}: {e}"
-            self.disabled = True
-            return None
-        if response.stop_reason == "refusal":
-            self.last_error = "the request was declined"
-            return None
-        text = "".join(b.text for b in response.content if b.type == "text").strip()
-        return text or None
+        return text
 
     def _json(self, prompt: str, schema: dict, max_tokens: int = 4000) -> dict | None:
-        text = self._create(prompt, max_tokens=max_tokens, schema=schema)
+        text = self._create(prompt, max_tokens=max_tokens, json_schema=schema)
         if not text:
             return None
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
+        data = _parse_json_object(text)
+        if data is None:
             self.last_error = "the response was not valid JSON"
-            return None
+        return data
+
+    def test(self, timeout: float = 30) -> str | None:
+        """Send a tiny request; returns the reply, or None (see ``last_error``)."""
+        self.disabled = False
+        return self._create("Reply with the single word: ok", max_tokens=20, timeout=timeout)
 
     # -- features ---------------------------------------------------------
     def explain(self, kind: str, suggestion_text: str, grounding: str, profile_md: str, code: str) -> str | None:
@@ -160,12 +148,10 @@ class ClaudeAssistant:
                         "code": {"type": "string"},
                     },
                     "required": ["line", "title", "problem", "alternative", "rationale", "code"],
-                    "additionalProperties": False,
                 },
             }
         },
         "required": ["suggestions"],
-        "additionalProperties": False,
     }
 
     def review(self, code: str, profile_md: str, already: list[str]) -> list[dict] | None:
@@ -178,7 +164,9 @@ class ClaudeAssistant:
             f"<dataset_profile>\n{profile_md}\n</dataset_profile>\n\n<user_code>\n{code}\n</user_code>"
         )
         data = self._json(prompt, self.REVIEW_SCHEMA)
-        return data["suggestions"] if data else None
+        if not data or not isinstance(data.get("suggestions"), list):
+            return None
+        return data["suggestions"]
 
     FIX_SCHEMA = {
         "type": "object",
@@ -188,7 +176,6 @@ class ClaudeAssistant:
             "fixed_code": {"type": "string"},
         },
         "required": ["can_fix", "explanation", "fixed_code"],
-        "additionalProperties": False,
     }
 
     def propose_fix(self, statement: str, error: str, category: str, context: str) -> dict | None:
@@ -201,4 +188,93 @@ class ClaudeAssistant:
             f"<error category=\"{category}\">\n{error}\n</error>\n\n<statement>\n{statement}\n</statement>\n\n"
             f"<context>\n{context}\n</context>"
         )
-        return self._json(prompt, self.FIX_SCHEMA, max_tokens=4000)
+        data = self._json(prompt, self.FIX_SCHEMA, max_tokens=4000)
+        if not data or not all(k in data for k in ("can_fix", "explanation", "fixed_code")):
+            return None
+        return data
+
+
+class AIError(Exception):
+    """A failed call, with a message written for the user. ``fatal`` = retrying cannot help (bad key)."""
+
+    def __init__(self, message: str, status: int | None = None, fatal: bool = False):
+        super().__init__(message)
+        self.status = status
+        self.fatal = fatal
+
+
+def _error_detail(e: urllib.error.HTTPError) -> str:
+    try:
+        data = json.loads(e.read().decode("utf-8", "replace"))
+        err = data.get("error", data) if isinstance(data, dict) else data
+        if isinstance(err, list) and err:  # e.g. Gemini wraps errors in a list
+            err = err[0].get("error", err[0]) if isinstance(err[0], dict) else err[0]
+        return str(err.get("message", err)) if isinstance(err, dict) else str(err)
+    except Exception:
+        return str(e.reason)
+
+
+def _friendly(status: int, detail: str) -> str:
+    if status in (401, 403):
+        return f"the API key was rejected ({status}) - check it is correct, active and allowed to use this model. Provider says: {detail}"
+    if status == 404:
+        return f"endpoint or model not found (404) - check the base URL and the model name. Provider says: {detail}"
+    if status == 429:
+        return f"rate limit or quota exceeded (429) - check your plan/billing. Provider says: {detail}"
+    if status == 400:
+        return f"the provider rejected the request (400): {detail}"
+    if status >= 500:
+        return f"the provider had a server error ({status}); try again shortly. {detail}"
+    return f"API error {status}: {detail}"
+
+
+def _request(url: str, headers: dict, body: dict | None = None, timeout: float = TIMEOUT_SECONDS) -> dict:
+    """POST ``body`` (or GET when None) and return the decoded JSON, raising :class:`AIError`."""
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST" if body is not None else "GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise AIError(_friendly(e.code, _error_detail(e)), status=e.code, fatal=e.code in (401, 403)) from None
+    except urllib.error.URLError as e:
+        reason = e.reason
+        if isinstance(reason, socket.timeout):
+            raise AIError(f"timed out after {timeout:g}s waiting for {url}") from None
+        raise AIError(f"could not connect to {url} ({reason}) - check the address and your internet connection") from None
+    except (socket.timeout, TimeoutError):
+        raise AIError(f"timed out after {timeout:g}s waiting for {url}") from None
+    except ValueError:
+        raise AIError(f"{url} did not return JSON - is it an OpenAI-compatible endpoint?") from None
+    except OSError as e:
+        raise AIError(f"network error: {e}") from None
+
+
+def fetch_models(cfg: _config.AIConfig, timeout: float = 20) -> list[str]:
+    """Ask the provider which models this key can use. Raises :class:`AIError`."""
+    payload = _request(cfg.models_url, cfg.headers, None, timeout)
+    items = payload.get("data", payload.get("models", [])) if isinstance(payload, dict) else payload
+    ids = []
+    for item in items or []:
+        mid = item.get("id") or item.get("name") if isinstance(item, dict) else item
+        if isinstance(mid, str) and mid:
+            ids.append(mid[len("models/"):] if mid.startswith("models/") else mid)
+    if not ids:
+        raise AIError("the provider returned no models for this key")
+    return sorted(dict.fromkeys(ids))
+
+
+def _parse_json_object(text: str) -> dict | None:
+    """Parse a JSON object from model output, tolerating code fences and surrounding prose."""
+    text = text.strip()
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
+    if fence:
+        text = fence.group(1)
+    for candidate in (text, text[text.find("{"): text.rfind("}") + 1] if "{" in text else ""):
+        try:
+            data = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None

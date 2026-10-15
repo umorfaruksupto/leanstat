@@ -1,7 +1,7 @@
 """Rule-based dataset profiling.
 
 Everything here works without AI. The profile is the analytical context that
-the advisor, the recovery engine and the optional Claude backend all share.
+the advisor, the recovery engine and the optional AI backend all share.
 """
 
 from __future__ import annotations
