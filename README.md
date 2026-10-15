@@ -12,9 +12,14 @@ You write ordinary **pandas / NumPy / SciPy / Matplotlib** code. learnstat:
 
 It's not a new language. Everything you learn uses the real pandas, SciPy and Matplotlib APIs, so the skills carry over to the rest of the ecosystem.
 
+[![PyPI](https://img.shields.io/pypi/v/learnstat)](https://pypi.org/project/learnstat/)
+
 ## Install
 
+From PyPI: <https://pypi.org/project/learnstat/>
+
 ```bash
+pip install "learnstat[all]"      # from PyPI
 pip install -e ".[all]"        # pandas, numpy, matplotlib, scipy, anthropic, ipython
 pip install -e .               # core only: profiling, rules, recovery (no AI)
 ```

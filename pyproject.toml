@@ -22,6 +22,11 @@ jupyter = ["ipython>=8.0"]
 all = ["matplotlib>=3.7", "scipy>=1.10", "anthropic>=1.0", "ipython>=8.0"]
 dev = ["pytest>=7", "matplotlib>=3.7", "scipy>=1.10", "ipython>=8.0"]
 
+[project.urls]
+Homepage = "https://github.com/umorfaruksupto/leanstat"
+Repository = "https://github.com/umorfaruksupto/leanstat"
+PyPI = "https://pypi.org/project/learnstat/"
+
 [project.scripts]
 learnstat = "learnstat.cli:main"
 
